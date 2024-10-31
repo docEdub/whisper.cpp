@@ -6,7 +6,10 @@
 #include <vector>
 #include <thread>
 
+std::mutex  g_mutex;
 std::thread g_worker;
+
+std::string g_transcribed   = "";
 
 std::vector<struct whisper_context *> g_contexts(4, nullptr);
 
@@ -102,13 +105,61 @@ EMSCRIPTEN_BINDINGS(whisper) {
 
         // run the worker
         {
+            g_transcribed = "";
+
             g_worker = std::thread([index, params, pcmf32 = std::move(pcmf32)]() {
                 whisper_reset_timings(g_contexts[index]);
                 whisper_full(g_contexts[index], params, pcmf32.data(), pcmf32.size());
                 whisper_print_timings(g_contexts[index]);
+
+                const auto t_start = std::chrono::high_resolution_clock::now();
+                auto ctx = g_contexts[index];
+
+                float prob = 0.0f;
+                int64_t t_ms = 0;
+                int prob_n = 0;
+                std::string result;
+
+                const int n_segments = whisper_full_n_segments(ctx);
+                for (int i = 0; i < n_segments; ++i) {
+                    const char * text = whisper_full_get_segment_text(ctx, i);
+
+                    result += text;
+
+                    const int n_tokens = whisper_full_n_tokens(ctx, i);
+                    for (int j = 0; j < n_tokens; ++j) {
+                        const auto token = whisper_full_get_token_data(ctx, i, j);
+
+                        prob += token.p;
+                        ++prob_n;
+                    }
+                }
+
+                if (prob_n > 0) {
+                    prob /= prob_n;
+                }
+
+                const auto t_end = std::chrono::high_resolution_clock::now();
+                t_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+
+                std::lock_guard<std::mutex> lock(g_mutex);
+                g_transcribed += result;
+
+                printf("[af] TRANSCRIBED: %s\n", result.c_str());
             });
         }
 
         return 0;
+    }));
+
+    emscripten::function("get_text", emscripten::optional_override([](size_t index) -> std::string {
+        std::string transcribed;
+
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            transcribed = std::move(g_transcribed);
+        }
+
+        return transcribed;
     }));
 }
