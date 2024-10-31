@@ -36,6 +36,7 @@ set_target_properties(${TARGET} PROPERTIES LINK_FLAGS " \
     -s TOTAL_MEMORY=2000MB \
     -s FORCE_FILESYSTEM=1 \
     -s EXPORTED_RUNTIME_METHODS=\"['print', 'printErr', 'ccall', 'cwrap']\" \
+    -s ASSERTIONS=1 \
     ${EXTRA_FLAGS} \
     ")
 
