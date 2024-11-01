@@ -19,6 +19,8 @@ static inline int mpow2(int n) {
     return p/2;
 }
 
+const int MaxThreads = mpow2(std::thread::hardware_concurrency());
+
 EMSCRIPTEN_BINDINGS(whisper) {
     emscripten::function("init", emscripten::optional_override([](const std::string & path_model) {
         if (g_worker.joinable()) {
@@ -52,9 +54,13 @@ EMSCRIPTEN_BINDINGS(whisper) {
         }
     }));
 
-    emscripten::function("full_default", emscripten::optional_override([](size_t index, const emscripten::val & audio, const std::string & lang, int nthreads, bool translate) {
+    emscripten::function("full_default", emscripten::optional_override([](size_t index, const emscripten::val & audio, int nthreads) {
         if (g_worker.joinable()) {
             g_worker.join();
+        }
+
+        if (nthreads == -1) {
+            nthreads = MaxThreads;
         }
 
         --index;
@@ -69,13 +75,13 @@ EMSCRIPTEN_BINDINGS(whisper) {
 
         struct whisper_full_params params = whisper_full_default_params(whisper_sampling_strategy::WHISPER_SAMPLING_GREEDY);
 
-        params.print_realtime   = true;
+        params.print_realtime   = false;
         params.print_progress   = false;
-        params.print_timestamps = true;
+        params.print_timestamps = false;
         params.print_special    = false;
-        params.translate        = translate;
-        params.language         = whisper_is_multilingual(g_contexts[index]) ? lang.c_str() : "en";
-        params.n_threads        = std::min(nthreads, std::min(16, mpow2(std::thread::hardware_concurrency())));
+        params.translate        = false;
+        params.language         = "en";
+        params.n_threads        = std::min(nthreads, std::min(16, MaxThreads));
         params.offset_ms        = 0;
 
         std::vector<float> pcmf32;
@@ -90,18 +96,18 @@ EMSCRIPTEN_BINDINGS(whisper) {
         memoryView.call<void>("set", audio);
 
         // print system information
-        {
-            printf("system_info: n_threads = %d / %d | %s\n",
-                    params.n_threads, std::thread::hardware_concurrency(), whisper_print_system_info());
+        // {
+        //     printf("system_info: n_threads = %d / %d | %s\n",
+        //             params.n_threads, std::thread::hardware_concurrency(), whisper_print_system_info());
 
-            printf("%s: processing %d samples, %.1f sec, %d threads, %d processors, lang = %s, task = %s ...\n",
-                    __func__, int(pcmf32.size()), float(pcmf32.size())/WHISPER_SAMPLE_RATE,
-                    params.n_threads, 1,
-                    params.language,
-                    params.translate ? "translate" : "transcribe");
+        //     printf("%s: processing %d samples, %.1f sec, %d threads, %d processors, lang = %s, task = %s ...\n",
+        //             __func__, int(pcmf32.size()), float(pcmf32.size())/WHISPER_SAMPLE_RATE,
+        //             params.n_threads, 1,
+        //             params.language,
+        //             params.translate ? "translate" : "transcribe");
 
-            printf("\n");
-        }
+        //     printf("\n");
+        // }
 
         // run the worker
         {
@@ -110,7 +116,7 @@ EMSCRIPTEN_BINDINGS(whisper) {
             g_worker = std::thread([index, params, pcmf32 = std::move(pcmf32)]() {
                 whisper_reset_timings(g_contexts[index]);
                 whisper_full(g_contexts[index], params, pcmf32.data(), pcmf32.size());
-                whisper_print_timings(g_contexts[index]);
+                // whisper_print_timings(g_contexts[index]);
 
                 const auto t_start = std::chrono::high_resolution_clock::now();
                 auto ctx = g_contexts[index];
@@ -145,7 +151,7 @@ EMSCRIPTEN_BINDINGS(whisper) {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 g_transcribed += result;
 
-                printf("[af] TRANSCRIBED: %s\n", result.c_str());
+                // printf("[af] TRANSCRIBED: %s\n", result.c_str());
             });
         }
 
